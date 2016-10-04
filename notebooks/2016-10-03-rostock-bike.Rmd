@@ -1,0 +1,198 @@
+---
+title: "Bike usage in Rostock"
+author: "Michael Ingrisch"
+date: "October 3, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Bike usage in Rostock
+
+In this project, we analyze data from bicycle counters in Rostock, Germany. Data is kindly provided in open form from several counters in Rostock, via the web site http://www.opendata-hro.de/dataset/radmonitore
+
+Not being familiar with this city, we choose (rather arbitrarily) a single bike counter in the center.
+
+Importantly, in this project, we follow the recently published book "R for data science", in order to get familiar with the suite of packages commonly referred to as "tidyverse"
+
+This document is written in R markdown, in order to provide maximal reproducibility.
+
+## Prerequisites
+
+Before starting out with the analysis, the following list of packages was installed:
+```{r prerequisites, eval=FALSE, include=FALSE}
+pkgs <- c(
+  "dplyr", "gapminder", "ggplot2", "jsonlite", "Lahman", 
+  "lubridate", "modelr", "nycflights13", "purrr", "readr", 
+  "stringr", "tibble", "tidyr"
+)
+install.packages(pkgs)
+```
+Presumably, we could have shortened this by simply installing `tidyverse`.
+```{r imports}
+library(tidyverse)
+```
+
+I am working on an Ubuntu 16.04 system. Installing these packages was not as straightforward as expected, I had to install several system packages manually. Thankfully, the error messages during installation provided all required information.
+
+## Data download and preparation
+
+
+Data was downloaded from the Rostock open data website, as follows:
+```{r datadownload}
+#library(readr)
+# to increase speed, we load locally, instead of
+#data <- read_csv('https://geo.sv.rostock.de/download/opendata/radmonitore/radmonitore_daten.csv')
+data <- read_csv('radmonitore_daten.csv')
+
+data.radmonitore <- read_csv('https://geo.sv.rostock.de/download/opendata/radmonitore/radmonitore_standorte.csv')
+data
+```
+This particular dataset contains count data from a range of bicycle counters. For each counter, the number of bikes per 15 minutes is provided. The data consists of three rows, with a total of `r dim(data)[1]` observations.
+
+Detailed data about each bicycle counter is provided in the data frame /tibble data.radmonitore. In particular, we can use the `id` in this dataframe to map the name to the name `bezeichnung`. We select the columns `id` and `bezeichnung` from rad.monitore and join the resulting tibble to the tibble `data`. Then, we dump the then redundant column `id`. 
+
+We can use as simple _mutating join_:
+
+```{r data.join}
+id.bezeichung <- data.radmonitore %>% 
+  select(id, bezeichnung) %>%
+  rename(standort_id=id)
+
+data <- data %>% left_join(id.bezeichung, by = "standort_id") %>%
+  select(-standort_id)
+```
+
+
+The data is actually quite tidy:
+
+* each row contains a single observation: the bicycle count in a time window of 15 minutes for a particular counter
+
+* each column contains a single variable: counter, time and count
+ 
+The tibble printout shows that the time (zeitpunkt) already was read as datetime.
+We only need to convert the counter name (`bezeichung`)  to a factor.
+```{r tidydata}
+library(forcats)
+library(lubridate)
+data <- data %>%
+  mutate(bezeichnung = factor(bezeichnung))
+ 
+data %>% count(bezeichnung)   
+```
+
+Counting the occurences of each `bezeichnung` reveals that we have data from eight counters with variable number of total observations.
+
+ 
+## Exploratory data analysis
+Before we start to further explore this datset, we split our data, in order to have untouched data for testing possible predictive models in a later stage.
+
+Since we have a large amount of data available, we decide to use data up to 31.12.2014 for exploration and model building, and all later data for testing.
+
+```{r train-test-split}
+
+train <- data%>% filter(year(zeitpunkt)<2015)
+test <- data %>% filter(year(zeitpunkt)>=2015)
+```
+For all further explorations, we hold out the `test` data and use exclusively the `train` data
+
+### Bicycle counts over time
+
+Without any further information, we begin to explore this dataset, using the tidyverse stack. This is a very simple plot, that displays 15-minute counts over the entire time range
+
+```{r EDA1}
+library(ggplot2)
+ggplot(train, aes(zeitpunkt, summe)) +
+  geom_line() 
+
+#  facet_wrap(~standort_id,scales='free_y')
+
+```
+
+This plot is rather cluttered. Still, we are able to observe:
+
+* strong seasonal changes: In summer, far more cyclists pass the counters than in winter
+* several very strong peaks, which require further investigation
+* a steep increase in counts around April 2013 (were further counters installed here?)
+
+### Counts by counting stations
+
+We adress the last observation first and split the plot by counters
+```{r EDA2}
+ggplot(train, aes(zeitpunkt, summe)) +
+  geom_line() +
+  facet_wrap(~bezeichnung)
+
+```
+
+This shows that the steep increase around April 2014 occurs in all counters that were operating at this time and may hence be associated with other influence factors (weather).
+
+To simplify our further analysis, we exclude counters that went into operation after 01/2013, namely 'Hundertmännerstraße', 'Mühlendamm/Flussbad' and 'Warnemünde Wetterwarte':
+
+```{r EDA.dropdata}
+train <- train %>%
+  filter(bezeichnung !='Hundertmännerstraße' ) %>%  
+  filter(bezeichnung != 'Mühlendamm/Flussbad' ) %>%
+  filter(bezeichnung != 'Warnemünde Wetterwarte') 
+
+train %>% count(bezeichnung)
+```
+We now have restricted our dataset to four counters only, with roughly similar number of observations. 
+
+```{r EDA3}
+ggplot(train, aes(zeitpunkt, summe)) +
+  geom_line() +
+  facet_wrap(~bezeichnung)
+
+```
+
+That looks much better. We still observe:
+* seasonal changes
+* occasional peaks
+* periods with no (or very few) counts
+
+### Weekday usage patterns
+
+What is the variation over the weekdays? We first count the number of bicycles per day, and then visualize the counts per weekday:
+
+```{r EDA.weekdays}
+
+daily <- train %>% 
+  mutate(date = date(zeitpunkt)) %>%
+  group_by(bezeichnung, date) %>% 
+  summarise(n = sum(summe)) %>%
+  mutate(weekday = wday(date, label = TRUE)) 
+
+daily
+
+ggplot(daily, aes(x=weekday, y=n)) +
+  geom_boxplot() +
+  facet_wrap(~ bezeichnung, scales='free_y') 
+```
+
+We observe that  Sunday generally sees less cyclists, but this distinction is not equally pronounced at the four counters. This hints at different usage patterns, e.g. daily commuters versus weekend cyclists. 
+
+### Usage patterns over daytime
+
+The distribution of counts over the daytime may further elucidate this observation:
+
+```{r EDA.hours, message=FALSE}
+
+hourly <- train %>% 
+  mutate(hour = hour(zeitpunkt)) %>%
+  group_by(bezeichnung, hour) %>% 
+  summarise(mean = mean(summe)) 
+
+hourly
+
+ggplot(hourly, aes(x=hour, y=mean)) +
+  geom_line() + 
+  facet_wrap(~ bezeichnung)
+```
+
+## Regression: Modeling the count data
+
+
+
