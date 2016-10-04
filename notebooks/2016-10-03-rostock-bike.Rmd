@@ -19,7 +19,7 @@ Importantly, in this project, we follow the recently published book "R for data 
 
 This document is written in R markdown, in order to provide maximal reproducibility.
 
-## Prerequisites
+# Prerequisites
 
 Before starting out with the analysis, the following list of packages was installed:
 ```{r prerequisites, eval=FALSE, include=FALSE}
@@ -37,7 +37,7 @@ library(tidyverse)
 
 I am working on an Ubuntu 16.04 system. Installing these packages was not as straightforward as expected, I had to install several system packages manually. Thankfully, the error messages during installation provided all required information.
 
-## Data download and preparation
+# Data download and preparation
 
 
 Data was downloaded from the Rostock open data website on 2016-10-03, as follows:
@@ -87,7 +87,7 @@ data %>% count(bezeichnung)
 Counting the occurences of each `bezeichnung` reveals that we have data from eight counters with variable number of total observations.
 
  
-## Exploratory data analysis
+# Exploratory data analysis
 Before we start to further explore this datset, we split our data, in order to have untouched data for testing possible predictive models in a later stage.
 
 Since we have a large amount of data available, we decide to use data up to 31.12.2014 for exploration and model building, and all later data for testing.
@@ -260,13 +260,13 @@ hourly <- train %>%
 
 ggplot(hourly, aes(x=hour, y=mean)) +
   geom_line() +
-  scale_x_continuous(breaks=seq(0,23,1))
+  scale_x_continuous(breaks=seq(0,23,1), minor_breaks = NULL)
 ```
 
 This looks much better: the two peaks are sharper now, and, in particular, the occur at sensible daytimes of 7am and 4pm.
 
 
-## Regression: Modeling the count data
+# Regression: Modeling the count data
 
 From our exploratory data analysis, we know that our count data is dominated by three main effects:
 
@@ -280,6 +280,36 @@ From our exploratory data analysis, we know that our count data is dominated by 
 In this section, we try to capture these observations in a regression model, starting with the most obvious effect of seasonal changes.
 
 In order to keep things simple, we further reduce our data set to the single counter with the most counts ('Am Strande/Holzhalbinsel').
+
+## Modeling the seasonal changes
+
+We can use two well-known effects of summer for capturing the increase in bikers during the summer months:
+
+* It is warmer
+* The sun shines longer
+
+Obviously, the two effects are strongly correlated. However, appropriate data is not available in the original dataframe. Whereas the sunshine time is easier to access, we can also try to capture weather data - this has the additional benefit of providing precipitation data for the observed time - and it is not unlikely that rain has a strong effect on bike counts.
+
+### Accessing weather data from DWD
+
+The closest weather station from the DWD is presumably `04271 19911101 20161002 4 54.1803   12.0808 Rostock-Warnemünde Mecklenburg-Vorpommern `,  as revealed by the list of weather stations provided at ftp://ftp-cdc.dwd.de/pub/CDC/help/EB_Stundenwerte_Beschreibung_Stationen.txt, where the first number is the station id .
+
+Data for  this weather station was downloaded from ftp://ftp-cdc.dwd.de/pub/CDC/observations_germany/climate/daily/kl/historical/tageswerte_04271_19470101_20151231_hist.zip on 2016-10-04.
+
+This zip file contains, along with descriptions, the central datafile `data/external/dwd_rostock. With annoying whitespaces, delimited by `;` and an unparsed date. No problem for readr.
+
+```{r join.weather}
+weather <- read_delim('data/external/dwd_rostock/produkt_klima_Tageswerte_19470101_20151231_04271.txt',';', trim_ws = TRUE)
+
+weather$datum <- ymd(weather$`MESS_DATUM`)
+weather <- weather %>%
+  select(datum, LUFTTEMPERATUR, LUFTTEMPERATUR_MAXIMUM, LUFTTEMPERATUR_MINIMUM,
+         NIEDERSCHLAGSHOEHE, SONNENSCHEINDAUER)
+
+
+train$datum <- as_date(train$zeitpunkt)
+train.weather <- train %>% left_join(weather, by="datum")
+```
 
 
 
