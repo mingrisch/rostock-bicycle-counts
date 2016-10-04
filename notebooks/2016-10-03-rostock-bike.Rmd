@@ -40,19 +40,20 @@ I am working on an Ubuntu 16.04 system. Installing these packages was not as str
 ## Data download and preparation
 
 
-Data was downloaded from the Rostock open data website, as follows:
+Data was downloaded from the Rostock open data website on 2016-10-03, as follows:
 ```{r datadownload}
 #library(readr)
 # to increase speed, we load locally, instead of
 #data <- read_csv('https://geo.sv.rostock.de/download/opendata/radmonitore/radmonitore_daten.csv')
-data <- read_csv('radmonitore_daten.csv')
+data <- read_csv('data/external/radmonitore_daten.csv')
 
-data.radmonitore <- read_csv('https://geo.sv.rostock.de/download/opendata/radmonitore/radmonitore_standorte.csv')
+#data.radmonitore <- read_csv('https://geo.sv.rostock.de/download/opendata/radmonitore/radmonitore_standorte.csv')
+data.radmonitore <- read_csv('data/external/radmonitore_standorte.csv')
 data
 ```
 This particular dataset contains count data from a range of bicycle counters. For each counter, the number of bikes per 15 minutes is provided. The data consists of three rows, with a total of `r dim(data)[1]` observations.
 
-Detailed data about each bicycle counter is provided in the data frame /tibble data.radmonitore. In particular, we can use the `id` in this dataframe to map the name to the name `bezeichnung`. We select the columns `id` and `bezeichnung` from rad.monitore and join the resulting tibble to the tibble `data`. Then, we dump the then redundant column `id`. 
+Detailed data about each bicycle counter is provided in the data frame/tibble data.radmonitore. In particular, we can use the `id` in this dataframe to map the name to the name `bezeichnung`. We select the columns `id` and `bezeichnung` from rad.monitore and join the resulting tibble to the tibble `data`. Then, we dump the then redundant column `id`. 
 
 We can use as simple _mutating join_:
 
@@ -102,7 +103,7 @@ For all further explorations, we hold out the `test` data and use exclusively th
 
 Without any further information, we begin to explore this dataset, using the tidyverse stack. This is a very simple plot, that displays 15-minute counts over the entire time range
 
-```{r EDA1}
+```{r EDA1, eval=FALSE}
 library(ggplot2)
 ggplot(train, aes(zeitpunkt, summe)) +
   geom_line() 
@@ -120,7 +121,7 @@ This plot is rather cluttered. Still, we are able to observe:
 ### Counts by counting stations
 
 We adress the last observation first and split the plot by counters
-```{r EDA2}
+```{r EDA2, eval=FALSE}
 ggplot(train, aes(zeitpunkt, summe)) +
   geom_line() +
   facet_wrap(~bezeichnung)
@@ -129,23 +130,19 @@ ggplot(train, aes(zeitpunkt, summe)) +
 
 This shows that the steep increase around April 2014 occurs in all counters that were operating at this time and may hence be associated with other influence factors (weather).
 
-To simplify our further analysis, we exclude counters that went into operation after 01/2013, namely 'Hundertmännerstraße', 'Mühlendamm/Flussbad' and 'Warnemünde Wetterwarte':
+To simplify our further analysis, we focus our analysis on the single counter with the most counts:
 
-```{r EDA.dropdata}
-train <- train %>%
-  filter(bezeichnung !='Hundertmännerstraße' ) %>%  
-  filter(bezeichnung != 'Mühlendamm/Flussbad' ) %>%
-  filter(bezeichnung != 'Warnemünde Wetterwarte') 
 
-train %>% count(bezeichnung)
+```{r EDA.one.counter}
+train <- train %>% 
+  filter(bezeichnung == 'Am Strande/Holzhalbinsel')
 ```
-We now have restricted our dataset to four counters only, with roughly similar number of observations. 
+
+We now have restricted our dataset to a single counter. 
 
 ```{r EDA3}
 ggplot(train, aes(zeitpunkt, summe)) +
-  geom_line() +
-  facet_wrap(~bezeichnung)
-
+  geom_line() 
 ```
 
 That looks much better. We still observe:
@@ -168,11 +165,10 @@ daily <- train %>%
 daily
 
 ggplot(daily, aes(x=weekday, y=n)) +
-  geom_boxplot() +
-  facet_wrap(~ bezeichnung, scales='free_y') 
+  geom_boxplot() 
 ```
 
-We observe that  Sunday generally sees less cyclists, but this distinction is not equally pronounced at the four counters. This hints at different usage patterns, e.g. daily commuters versus weekend cyclists. 
+We observe that  Saturday and Sunday generally sees less cyclists than workdays and suggests that moreRostockers often bike to work 
 
 ### Usage patterns over daytime
 
@@ -188,11 +184,102 @@ hourly <- train %>%
 hourly
 
 ggplot(hourly, aes(x=hour, y=mean)) +
-  geom_line() + 
-  facet_wrap(~ bezeichnung)
+  geom_line() 
+
+
 ```
 
+## Fixing incorrect datetimes
+
+We observe a bimodal distribution with peaks in counters at 5 am and 15pm, possibly related to school kids and commuters.
+This is puzzling: Should those peaks not be more around 8ish and 6ish? I find it hard to believe that Rostockians work so early.
+
+Are we having an issue with timezones and lubridate, maybe? 
+A close look at the raw data reveals two key points:
+
+1. The acquisition time starts at 2013-01-01
+2. on 2013-04-01, a switch to daylight saving time occurs, indicated by the switch from the +01 offset to +02: 
+```
+standort_id,zeitpunkt,summe
+100005392,2013-01-01T00:00:00+01:00,0
+100005392,2013-01-01T00:15:00+01:00,0
+...
+100005392,2013-03-30T23:45:00+01:00,0
+100005392,2013-04-01T00:00:00+02:00,0
+```
+
+We investigate our hourly data frame for these dates, to check whether the time column was parsed correctly:
+```{r check.time.parsing}
+train
+
+filter(train, (zeitpunkt >= as.Date('2013-03-31')) & (zeitpunkt <= as.Date('2013-04-02')))
+```
+
+This reveals an issue with our date time parsing. Damn.
+It appears that read_csv did not parse the time shift encoded as +01:00 or +02:00 correctly. 
+
+The vignette of readr `vignette("column-types")` reveals that we can specify the format of the `zeitpunkt` column using col_datetime.
+
+Also, `parse_datetime` from the same package allows quick parsing of strings for rapid testing. 
+
+```{r test.time.parsing} 
+parse_datetime('2013-01-01T00:00:00+01:00')
+parse_datetime('2013-01-01T00:00:00+01:00',locale=locale(tz="Europe/Berlin"))
+```
+
+Apparently, providing the correct timezone (found from `OlsonNames`) corrects this issue.
+
+Data preparation all over again, quickly, with a quick look at the commute pattern:
+
+```{r data.preparation.repaired}
+data <- read_csv('data/external/radmonitore_daten.csv',
+                 locale = locale(tz="Europe/Berlin"))
+
+id.bezeichung <- data.radmonitore %>% 
+  select(id, bezeichnung) %>%
+  rename(standort_id=id)
+
+data <- data %>% left_join(id.bezeichung, by = "standort_id") %>%
+  select(-standort_id) %>%
+  mutate(bezeichnung = factor(bezeichnung)) %>%
+  filter(bezeichnung == 'Am Strande/Holzhalbinsel')
+
+train <- data%>% filter(year(zeitpunkt)<2015)
+test <- data %>% filter(year(zeitpunkt)>=2015)
+
+daily <- train %>% 
+  mutate(date = date(zeitpunkt)) %>%
+  group_by(bezeichnung, date) %>% 
+  summarise(n = sum(summe)) %>%
+  mutate(weekday = wday(date, label = TRUE)) 
+
+hourly <- train %>% 
+  mutate(hour = hour(zeitpunkt)) %>%
+  group_by(bezeichnung, hour) %>% 
+  summarise(mean = mean(summe)) 
+
+ggplot(hourly, aes(x=hour, y=mean)) +
+  geom_line() +
+  scale_x_continuous(breaks=seq(0,23,1))
+```
+
+This looks much better: the two peaks are sharper now, and, in particular, the occur at sensible daytimes of 7am and 4pm.
+
+
 ## Regression: Modeling the count data
+
+From our exploratory data analysis, we know that our count data is dominated by three main effects:
+
+* seasonal changes: during summertime, we observe a lot more cyclists 
+
+* changes over weekdays: on sundays, we observe reduced bike usage
+
+* changes over daytime: several counters show a bimodal distribution of bicycle counts
+
+
+In this section, we try to capture these observations in a regression model, starting with the most obvious effect of seasonal changes.
+
+In order to keep things simple, we further reduce our data set to the single counter with the most counts ('Am Strande/Holzhalbinsel').
 
 
 
