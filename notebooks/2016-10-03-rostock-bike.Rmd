@@ -303,13 +303,72 @@ weather <- read_delim('data/external/dwd_rostock/produkt_klima_Tageswerte_194701
 
 weather$datum <- ymd(weather$`MESS_DATUM`)
 weather <- weather %>%
-  select(datum, LUFTTEMPERATUR, LUFTTEMPERATUR_MAXIMUM, LUFTTEMPERATUR_MINIMUM,
-         NIEDERSCHLAGSHOEHE, SONNENSCHEINDAUER)
-
+  select(datum, LUFTTEMPERATUR, LUFTTEMPERATUR_MAXIMUM, LUFTTEMPERATUR_MINIMUM)
 
 train$datum <- as_date(train$zeitpunkt)
 train.weather <- train %>% left_join(weather, by="datum")
 ```
 
+ For a start, we visualize the temperature over the time and model the number of cyclists in dependence of the temperature ('LUFTTEMPERATUR').
+
+```{r model.seasonal}
+ggplot(train.weather, aes(x=LUFTTEMPERATUR, y=summe)) + geom_hex(bins=50)
+
+train.weather2 <- train.weather %>%
+  filter(summe<100) 
+
+ggplot(train.weather2, aes(x=LUFTTEMPERATUR, y=summe)) + 
+  geom_hex(bins=50) +
 
 
+#ggplot(train.weather, aes(zeitpunkt, LUFTTEMPERATUR)) + geom_line()
+
+# how can we display lufttemperatur and summe in facets?
+
+library(modelr)
+model.season <- lm(summe~ LUFTTEMPERATUR, data = train.weather2)
+
+# and overlay the model fit
+grid <- train.weather%>%
+  data_grid(LUFTTEMPERATUR) %>%
+  add_predictions((model.season), "summe")
+
+ggplot(train.weather2, aes(x=LUFTTEMPERATUR, y=summe)) +
+  geom_hex(bins=50) +
+  geom_line(data=grid, color="red")
+
+train.weather <- train.weather %>%
+  add_residuals(model.season)
+
+ggplot(train.weather, aes(zeitpunkt, resid)) +
+  geom_line()
+# better: plot the residuals
+```
+
+Fitting a linear model on the temparature has removed the seasonal increase. But also, it appears that the variability of counts is much larger during the summer time. Is this an effect of precipitation? Or wind? One would expect that warm weather does not increase the number of cyclist, when it is raining...
+
+```{r model.seasonal}
+ggplot(train.weather, aes(zeitpunkt, NIEDERSCHLAGSHOEHE)) + geom_line()
+
+# how can we display lufttemperatur and summe in facets?
+
+library(modelr)
+model.season <- lm(summe~ LUFTTEMPERATUR, data = train.weather)
+
+
+grid <- train.weather%>%
+  data_grid(LUFTTEMPERATUR, zeitpunkt) %>%
+  add_predictions((model.season))
+
+# bad idea: memory hog
+ggplot(train.weather, aes(zeitpunkt, summe))+
+  geom_line() +
+  geom_line(aes(y=pred),data = grid, colour="red")
+
+train.weather <- train.weather %>%
+  add_residuals(model.season)
+
+ggplot(train.weather, aes(zeitpunkt, resid)) +
+  geom_line()
+# better: plot the residuals
+```
