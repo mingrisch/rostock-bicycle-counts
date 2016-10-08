@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "../")
 ```
 
 # Bike usage in Rostock
@@ -281,6 +282,9 @@ In this section, we try to capture these observations in a regression model, sta
 
 In order to keep things simple, we further reduce our data set to the single counter with the most counts ('Am Strande/Holzhalbinsel').
 
+Moreover, we work with daily counts and thus discard changes over daytime.
+
+
 ## Modeling the seasonal changes
 
 We can use two well-known effects of summer for capturing the increase in bikers during the summer months:
@@ -290,16 +294,20 @@ We can use two well-known effects of summer for capturing the increase in bikers
 
 Obviously, the two effects are strongly correlated. However, appropriate data is not available in the original dataframe. Whereas the sunshine time is easier to access, we can also try to capture weather data - this has the additional benefit of providing precipitation data for the observed time - and it is not unlikely that rain has a strong effect on bike counts.
 
-### Accessing weather data from DWD
+### Accessing weather data from DWD
 
 The closest weather station from the DWD is presumably `04271 19911101 20161002 4 54.1803   12.0808 Rostock-Warnemünde Mecklenburg-Vorpommern `,  as revealed by the list of weather stations provided at ftp://ftp-cdc.dwd.de/pub/CDC/help/EB_Stundenwerte_Beschreibung_Stationen.txt, where the first number is the station id .
 
 Data for  this weather station was downloaded from ftp://ftp-cdc.dwd.de/pub/CDC/observations_germany/climate/daily/kl/historical/tageswerte_04271_19470101_20151231_hist.zip on 2016-10-04.
 
 This zip file contains, along with descriptions, the central datafile `data/external/dwd_rostock. With annoying whitespaces, delimited by `;` and an unparsed date. No problem for readr.
-
+
 ```{r join.weather}
 weather <- read_delim('data/external/dwd_rostock/produkt_klima_Tageswerte_19470101_20151231_04271.txt',';', trim_ws = TRUE)
+
+# sunshine: ftp://ftp-cdc.dwd.de/pub/CDC/observations_germany/climate/daily/solar/
+
+# precipitation: ftp://ftp-cdc.dwd.de/pub/CDC/observations_germany/climate/daily/more_precip/historical/
 
 weather$datum <- ymd(weather$`MESS_DATUM`)
 weather <- weather %>%
@@ -307,68 +315,92 @@ weather <- weather %>%
 
 train$datum <- as_date(train$zeitpunkt)
 train.weather <- train %>% left_join(weather, by="datum")
+
+daily <- daily %>% mutate(datum=date)
+daily.weather <- daily %>% left_join(weather, by = "datum")
+
+ggplot(daily.weather, aes(x=date, y=n)) +
+  geom_line(alpha=0.3) +
+  geom_point(aes(alpha = 0.4,  size = 1.5, color=weekday)) +
+  labs(title='Summer sees far more cyclists')
+
+ggplot(daily.weather, aes(x=LUFTTEMPERATUR, y=n)) + geom_point(aes(alpha=0.2, size = 1.5,color = weekday)) +
+  labs(title='On warmer days, cyclist counts are higher')
+
+
 ```
 
- For a start, we visualize the temperature over the time and model the number of cyclists in dependence of the temperature ('LUFTTEMPERATUR').
+The relation between daily cyclist count and temperature looks roughly linear. Nice. Nevertheless, there is a lot of variation in the data, which indicates the influence of additional factors. A likely factor is the day of the week - Saturdays and Sundays appear to be associated with ower overall counts.
 
-```{r model.seasonal}
-ggplot(train.weather, aes(x=LUFTTEMPERATUR, y=summe)) + geom_hex(bins=50)
-
-train.weather2 <- train.weather %>%
-  filter(summe<100) 
-
-ggplot(train.weather2, aes(x=LUFTTEMPERATUR, y=summe)) + 
-  geom_hex(bins=50) +
+We try to capture the influence of the temperature on the cyclist counts:
 
 
-#ggplot(train.weather, aes(zeitpunkt, LUFTTEMPERATUR)) + geom_line()
-
-# how can we display lufttemperatur and summe in facets?
-
+```{r model.daily.temperature}
 library(modelr)
-model.season <- lm(summe~ LUFTTEMPERATUR, data = train.weather2)
+model.daily.temperature <- lm(n~ LUFTTEMPERATUR, data = daily.weather)
 
 # and overlay the model fit
-grid <- train.weather%>%
-  data_grid(LUFTTEMPERATUR) %>%
-  add_predictions((model.season), "summe")
+grid <- daily.weather %>%
+  data_grid(LUFTTEMPERATUR=seq_range(LUFTTEMPERATUR, 50)) %>%
+  add_predictions((model.daily.temperature), "n_pred")
 
-ggplot(train.weather2, aes(x=LUFTTEMPERATUR, y=summe)) +
-  geom_hex(bins=50) +
-  geom_line(data=grid, color="red")
+ggplot(daily.weather, aes(x=LUFTTEMPERATUR, y=n)) +
+  geom_point(aes(size=2, alpha=0.2, color = weekday)) +
+  geom_line(data=grid, aes(x=LUFTTEMPERATUR, y=n_pred,size=1)) +
+  labs("Temperature appears to be linearly related to cyclist counts")
 
-train.weather <- train.weather %>%
-  add_residuals(model.season)
+daily.weather <- daily.weather %>%
+  add_residuals(model.daily.temperature, var = "temperature.detrended")
 
-ggplot(train.weather, aes(zeitpunkt, resid)) +
-  geom_line()
-# better: plot the residuals
+rms.daily.temp <- mean(daily.weather$temperature.detrended^2)
+
+ggplot(daily.weather, aes(date, temperature.detrended)) +
+  geom_line(alpha=0.2) +
+  geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
+  geom_ref_line(h=0) +
+  labs(title=sprintf("After accounting for temperature, a lot of structure remains; RMS = %.1e", rms.daily.temp))
 ```
 
-Fitting a linear model on the temparature has removed the seasonal increase. But also, it appears that the variability of counts is much larger during the summer time. Is this an effect of precipitation? Or wind? One would expect that warm weather does not increase the number of cyclist, when it is raining...
+After accounting for the influence of air temperature, we observe that there is still some seasonal structure in the residuals: in particular, we observe higher counts during the summer months, which have not been captured by the air temperature model.  This is likely an influence of sunshine duration: On dark winter evenings, a lot of bikes tend to remain at home, presumably.
 
-```{r model.seasonal}
-ggplot(train.weather, aes(zeitpunkt, NIEDERSCHLAGSHOEHE)) + geom_line()
+Sunshine duration time is currently not available in our dataframe. needs to be accounted later on.
 
-# how can we display lufttemperatur and summe in facets?
+### Influence of weekdays
 
-library(modelr)
-model.season <- lm(summe~ LUFTTEMPERATUR, data = train.weather)
+We see that weekend cyclist counts are much lower than anticipated by our simple temperature model. In the next iteration, we include this effect as an additional variable. (later on, we could try to differentiate the two levels business day or not)
+
+```{r model.daily.temperature.wday}
+model.daily.temperature.wday <- lm(n~ LUFTTEMPERATUR + weekday, data = daily.weather)
+
+# and overlay the model fit
+grid <- daily.weather %>%
+  data_grid(LUFTTEMPERATUR=seq_range(LUFTTEMPERATUR, 50), weekday) %>%
+  add_predictions((model.daily.temperature.wday), "n.pred.temp.wday")
+
+ggplot(daily.weather, aes(x=LUFTTEMPERATUR, y=n)) +
+  geom_point(aes(size=2, alpha=0.2, color = weekday)) +
+  geom_line(data=grid, aes(x=LUFTTEMPERATUR, y=n.pred.temp.wday,size=1)) +
+  labs(title = "Temperature appears to be linearly related to cyclist counts")
 
 
-grid <- train.weather%>%
-  data_grid(LUFTTEMPERATUR, zeitpunkt) %>%
-  add_predictions((model.season))
+daily.weather <- daily.weather %>%
+  add_residuals(model.daily.temperature.wday, var = "temperature.wday.detrended")
 
-# bad idea: memory hog
-ggplot(train.weather, aes(zeitpunkt, summe))+
-  geom_line() +
-  geom_line(aes(y=pred),data = grid, colour="red")
+rms.daily.temp.weekday <- mean(daily.weather$temperature.wday.detrended^2)
 
-train.weather <- train.weather %>%
-  add_residuals(model.season)
+ggplot(daily.weather, aes(date, temperature.wday.detrended)) +
+  geom_line(alpha=0.2) +
+  geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
+  geom_ref_line(h=0) +
+  labs(title=sprintf("Correcting for temperature and weekdays removes a lot of structure; RMS = %.1e", rms.daily.temp.weekday))
 
-ggplot(train.weather, aes(zeitpunkt, resid)) +
-  geom_line()
-# better: plot the residuals
-```
+f```
+
+This looks very reasonable. We observe:
+
+* Seasonal changes remain - influence of sunshine duration?
+* particularly in winter, we observe large deviations from zero. Influence of negative temparatures? A nonlinear effect maybe?
+* occasionally, we observe many more cyclists than expected.
+
+
+
