@@ -289,13 +289,102 @@ ggplot(daily.weather, aes(date, temperature.wday.sunshine.precipitation.detrende
 
 Again, accounting for the additional variable has reduced the root mean square error. However, the reduction was not as pronounced as previously. We will have to be careful with interpretation of this result; and maybe we will have to have a look at parameters like the Akaike information criterion.
 
+Focusing on the outliers in the residuals, we observe:
+
+* three days, approximately in August, see far more cyclists than our model expects.
+
+* around the end of December, our model predicts more cyclists than we actually see.
+
+* Approximately in October 2014, we see a strong dip, which is not visible in October 2016.
+
+We proceed with a close inspection of the outliers:
+
+```{r outlier.display}
+outliers <- daily.weather %>% 
+  filter(abs(temperature.wday.sunshine.precipitation.detrended) > 900)
+
+ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.precipitation.detrended)) +
+  geom_point(aes(color=weekday)) + 
+  geom_text(aes(label=date, colour = weekday, vjust = -0.5)) +
+  labs(title="Negative outliers tend to be public holidays")
+
+```
+
+Labeling the outliers with dates permits the following insights:
+
+* Public holidays, such as Christmas, October 3rd, possibly Easter, are associated with much fewer cyclists than our model accounts for. This indicates that we really should use a variable 'public holiday'. Alternatively, we can pick up our previous notion of discrimination only 'workdays' and 'holidays.
+
+* The days with more cyclists are more difficult to interpret. Most notably, this affects some days in August. We need to check local events in Rostock.
+
+We grab a csv file with official holidays in Mecklenburg-Vorpommern. Google was very helpful: http://www.feiertage.net/frei-tage.php
+
+```{r model.daily.temperature.wday.sunshine.precipitation.holiday}
+# we need to grab public holidays:
+
+holidays.2013 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2013&type=csv',';', trim_ws = TRUE) %>% 
+  mutate(date = dmy(Tag)) %>% 
+  select(date, Feiertage)
+
+holidays.2014 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2014&type=csv',';', trim_ws = TRUE) %>% 
+  mutate(date = dmy(Tag))%>% 
+  select(date, Feiertage)
+
+holidays.2015 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2015&type=csv',';', trim_ws = TRUE) %>% mutate(date = dmy(Tag))%>% 
+  select(date, Feiertage)
+
+# we concatenate these frames 
+holidays <- bind_rows(holidays.2013, holidays.2014, holidays.2015)
+# and create a column 'holiday' in daily.weather, which is true when a
+# corresponding element exsits in the holiday table
+
+daily.weather <- left_join(daily.weather, holidays, by = 'date') %>%
+  mutate(holiday = is.na(Feiertage)) %>%
+  mutate(holiday = !holiday)
+
+
+model.daily.temperature.wday.sunshine.precipitation.holiday <- lm(n~ temperature + weekday + sunshinetime + precipitation + holiday, data = daily.weather)
+
+daily.weather <- daily.weather %>%
+  add_residuals(model.daily.temperature.wday.sunshine.precipitation.holiday, var = "temperature.wday.sunshine.precipitation.holiday.detrended")
+
+rms.daily.temp.weekday.sunshine.precipitation.holiday <- sqrt(mean(daily.weather$temperature.wday.sunshine.precipitation.holiday.detrended^2,na.rm = TRUE))
+
+ggplot(daily.weather, aes(date, temperature.wday.sunshine.precipitation.holiday.detrended)) +
+  geom_line(alpha=0.2) +
+  geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
+  geom_ref_line(h=0) +
+  labs(title=sprintf("Now with holidays: RMSE  %.1e", rms.daily.temp.weekday.sunshine.precipitation.holiday))
+
+outliers <- daily.weather %>% 
+  filter(abs(temperature.wday.sunshine.precipitation.holiday.detrended) > 900)
+
+ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.precipitation.holiday.detrended)) +
+  geom_point(aes(color=weekday)) + 
+  geom_text(aes(label=date, colour = weekday, vjust = -0.5)) +
+  labs(title="Some negative outliers remain")
+```
+
+
+Accounting for public holidays has further reduced the root mean square error. Some negative outliers remain, such as christmas, where many people are presumably on holiday.
+
+The days with cyclist counts that are much higher than our models expect still need further investigation. Google to the rescue:
+
+* 10.  August 2013: Hanse Sail Festival
+* 10. August 2014: Hanse Sail Festival. 
+
+Check. 
+
+
 ## Modelling: summary
 
 Our tentative final model has the following parameters:
 
 ```{r model.summary}
 summary(model.daily.temperature.wday.sunshine.precipitation)
+
 ```
+
+
 
 Modelling cyclist counts in Rostock thus permits the following insights:
 
