@@ -12,11 +12,13 @@ knitr::opts_knit$set(root.dir = "../")
 
 # Bike usage in Rostock
 
-In this project, we analyze data from bicycle counters in Rostock, Germany. Data is kindly provided in open form from several counters in Rostock, via the web site http://www.opendata-hro.de/dataset/radmonitore
+This post was inspired by a series of blog posts by Jake van der Plas, starting with an analysis of a single bike counter in Seattle (https://jakevdp.github.io/blog/2014/06/10/is-seattle-really-seeing-an-uptick-in-cycling/) and followed by an in-depth analysis of bicycle sharing data (Pronto challenge).
 
-Not being familiar with this city, we choose (rather arbitrarily) a single bike counter in the center.
-
-Importantly, in this project, we follow the recently published book "R for data science", in order to get familiar with the suite of packages commonly referred to as "tidyverse"
+In this project, I analyze data from a bicycle counter in Rostock, Germany. Data is kindly provided  in open form from several counters in Rostock, via the web site http://www.opendata-hro.de/dataset/radmonitore
+Not being familiar with this city, I chose (rather arbitrarily) a single bike counter in the city center, which provided the largest counts.
+ 
+Importantly, in this project, I follow the recently published book “R for data science” (http://r4ds.had.co.nz/), in order  take the suite of packages commonly referred to as “tidyverse” for a spin. 
+ 
 
 This document is written in R markdown, in order to provide maximal reproducibility.
 
@@ -32,7 +34,7 @@ library(lubridate)
 
 ## Bicycle data
 
-Data from the Rostock open data portal was downloaded on 2016-10-03 and saved locally. Providing the locale to read_csv circumvents a nasty issue with daylight saving time and the one- or two-hour time shift from UTC.
+Bicycle counter data was downloaded from the Rostock open data portal on 2016-10-03 and saved locally. Providing the locale to `read_csv` circumvents a nasty issue with daylight saving time and the one- or two-hour  time shift from UTC.
 
 
 ```{r data.preparation, message=FALSE}
@@ -61,6 +63,7 @@ daily <- train %>%
 
 ```
 
+Briefly, I have restricted the bicycle count data to all data recorded in the years 2013 and 2014. (data from 2015 to now is held out, for potential later use). Also, I have aggregated the 15-minute bicycle counts to counts per day. By this, I disregard a lot of information, but this keeps things simpler for now.
 
 ## Weather data 
 
@@ -74,7 +77,7 @@ This zip file contains, along with descriptions, the central datafile `data/exte
 
 For solar data, it is important to know that missing values are encoded as -999.
 
-```{r join.weather}
+```{r join.weather, message=FALSE}
 # unfortunately, this file ncontains neither valid sunshine time nor precipitation for our date range
 
 weather <- read_delim('data/external/dwd_rostock/produkt_klima_Tageswerte_19470101_20151231_04271.txt',';', trim_ws = TRUE)
@@ -98,16 +101,18 @@ precip <- read_delim('data/external/dwd_rostock/precip_klima_Tageswerte_19010101
 daily.weather <- daily %>% 
   left_join(weather, by="date") %>%
   left_join(solar, by="date") %>%
-  left_join(precip, by = "date")
+  left_join(precip, by = "date")  %>% 
+  mutate(rainy_day = precipitation >0)
 
 
 ```
 
-We have split our data into training and testing data, in order to have an untouched dataset for testing possible predictive models in a later stage. Also, we have aggregated bicycle counts for each day.
+In the last line, I have introduced a categorial variable `rainy_day`, which encodes whether there was precipitation on each given day or not. The tibble `daily.weather` (as far as I am concerned, a tibble is a dataframe with enhanced printing capabilities) now contains daily bicycle counts, temperature, sunshine time and precipitation.
+
 
 # Exploratory data analysis
 
-First, we investigate the bicycle counts over the entire time of our testing data:
+First, I investigate the bicycle counts over the entire time of our training data:
 
 ```{r EDA.daily}
 ggplot(daily, aes(x=date, y=n)) +
@@ -117,7 +122,7 @@ ggplot(daily, aes(x=date, y=n)) +
 
 We observe strong seasonal changes, summer in rostock sees many more cyclists than winter (no surprise here). Also, we observe faster fluctuations, maybe on a weekly scale.
 
-Of course, we can enhance our plot by incorporating information about the day of the week:
+Of course, we can enhance our plot by incorporating information about the day of the week. Also, we investigate relations to weather data:
 
 
 ```{r EDA.daily.continued}
@@ -126,25 +131,18 @@ ggplot(daily, aes(x=date, y=n)) +
   geom_point(aes(color = weekday, size = 2, alpha = 0.3)) +
   labs(title="Weekends tend to see fewer cyclists")
 
-ggplot(daily.weather, aes(x=date, y=n)) +
-  geom_line(alpha=0.3) +
-  geom_point(aes(alpha = 0.4,  size = 1.5, color=weekday)) +
-  labs(title='Summer sees far more cyclists')
-
 ggplot(daily.weather, aes(x=temperature, y=n)) + 
   geom_point(aes(alpha=0.2, size = 1.5,color = weekday)) +
   labs(title='On warmer days, cyclist counts are higher')
 
-ggplot(daily.weather, aes(x=precipitation)) + 
-  geom_histogram() +
-  labs(title="Most days in Rostock are dry")
+ggplot(daily.weather, aes(x=rainy_day, y=n)) + 
+  geom_boxplot(aes(alpha=0.2)) +
+  labs(title="More bikers on dry days") 
 
 ggplot(daily.weather, aes(x=precipitation, y=n)) + 
   geom_point(aes(alpha=0.2, size = 1.5,color = weekday)) +
   scale_x_log10() +
   labs(title="No strong relation of precipitation to cyclist counts") 
-
-
 
 ggplot(daily.weather, aes(x=sunshinetime, y=n)) +
   geom_point() +
@@ -157,17 +155,17 @@ ggplot(daily.weather, aes(x=sunshinetime, y=n)) +
 From our exploratory data analysis, we know that our count data is dominated by three main effects:
 
 * seasonal changes: during summertime, we observe a lot more cyclists 
-
 * changes over weekdays: on sundays, we observe reduced bike usage
 
-* changes over daytime: several counters show a bimodal distribution of bicycle counts
-
+* Dry days see more cyclists.
 
 In this section, we try to capture these observations in a regression model, starting with the most obvious effect of seasonal changes.
 
 In order to keep things simple, we further reduce our data set to the single counter with the most counts ('Am Strande/Holzhalbinsel').
 
 Moreover, we work with daily counts and thus discard changes over daytime.
+
+For the entire modeling process, in particular the syntax, I closely follow the tidyverse strategy described in the chapter 'Model building' in R4ds (http://r4ds.had.co.nz/model-building.html).
 
 
 ## Modeling the seasonal changes
@@ -176,9 +174,6 @@ We can use two well-known effects of summer for capturing the increase in bikers
 
 * It is warmer
 * The sun shines longer
-
-Obviously, the two effects are strongly correlated. However, appropriate data is not available in the original dataframe. Whereas the sunshine time is easier to access, we can also try to capture weather data - this has the additional benefit of providing precipitation data for the observed time - and it is not unlikely that rain has a strong effect on bike counts.
-
 
 The relation between daily cyclist count and temperature looks roughly linear. Nice. Nevertheless, there is a lot of variation in the data, which indicates the influence of additional factors. A likely factor is the day of the week - Saturdays and Sundays appear to be associated with ower overall counts.
 
@@ -211,22 +206,16 @@ ggplot(daily.weather, aes(date, temperature.detrended)) +
   labs(title=sprintf("After accounting for temperature, a lot of structure remains; RMS = %.1e", rms.daily.temp))
 ```
 
-After accounting for the influence of air temperature, we observe that there is still some  structure in the residuals: in particular, we observe that weekdays see more cyclists than weekends, and we observe some remaining seasonal patterns.
-
-
+After accounting for the influence of air temperature, we observe that there is still some  structure in the residuals. Removing the influence of the temperature has visually enhanced the (weaker) effect of the influence of weekdays on cyclist counts.
 
 
 ## Influence of weekdays
 
-We see that weekend cyclist counts are much lower than anticipated by our simple temperature model. In the next iteration, we include this effect as an additional variable. (later on, we could try to differentiate only the two level factor  business day or not)
+We see that weekend cyclist counts are much lower than anticipated by our simple temperature model. In the next iteration, we include this effect as an additional variable. (later on, we could try to differentiate only the two level factor  `business day or not`)
 
 ```{r model.daily.temperature.wday}
 model.daily.temperature.wday <- lm(n~ temperature + weekday, data = daily.weather)
 
-# and overlay the model fit
-grid <- daily.weather %>%
-  data_grid(temperature=seq_range(temperature, 50), weekday) %>%
-  add_predictions((model.daily.temperature.wday), "n.pred.temp.wday")
 
 daily.weather <- daily.weather %>%
   add_residuals(model.daily.temperature.wday, var = "temperature.wday.detrended")
@@ -237,16 +226,16 @@ ggplot(daily.weather, aes(date, temperature.wday.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
-  labs(title=sprintf("Correcting for temperature and weekdays removes a lot of structure; RMS = %.1e", rms.daily.temp.weekday))
+  labs(title=sprintf("Correcting for temperature and weekdays reduces  RMS to %.1e", rms.daily.temp.weekday))
 
 ```
-
+ *(by the way, I would love to know how to suppress the legend output for the size and alpha aesthetics, which is not really helpful here)* 
 This looks very reasonable. Root mean square error (RMS) has reduced considerably, and the weekend/workday pattern is much less pronounced - if visible at all.
 
 We observe:
 
 * Seasonal changes remain - influence of sunshine duration?
-* particularly in winter, we observe large deviations from zero. Influence of negative temparatures? A nonlinear effect maybe? 
+
 * occasionally, we observe many more cyclists than expected.
 
 ## Remaining seasonal changes: sunshine time?
@@ -263,47 +252,48 @@ ggplot(daily.weather, aes(date, temperature.wday.sunshine.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
-  labs(title=sprintf("Correcting for temperature and weekdays removes a lot of structure; RMS = %.1e", rms.daily.temp.weekday.sunshine))
+  labs(title=sprintf("Taking sunshine into account reduces seasonal changes; RMS = %.1e", rms.daily.temp.weekday.sunshine))
 
 ```
 
 This was a very successfull step in modeling our cyclist counts: The remaining seasonal patterns have reduced considerably (on account of sunshine time in summer being potentially much longer). Also, the root mean square error has reduced again notably.
 
-We have not seen an apparent influence of precipitation on cyclist counts. Let's see whether this holds up in univariate analysis and in the final model:
+We have seen that more cyclists tend to ride on dry days, and we have also observed that those riders that rain on rainy days are not intimidated by the amount of rain. Hence, we model the influence of rain simply with a categorical variable `rainy_day`.
 
 ```{r model.daily.precipitation}
-model.daily.precipiation <- lm(n ~ precipitation, data = daily.weather)
-model.daily.temperature.wday.sunshine.precipitation <- lm(n~ temperature + weekday + sunshinetime + precipitation, data = daily.weather)
+model.daily.temperature.wday.sunshine.rainy_day <- lm(n~ temperature + weekday + sunshinetime + rainy_day, data = daily.weather)
 
 daily.weather <- daily.weather %>%
-  add_residuals(model.daily.temperature.wday.sunshine.precipitation, var = "temperature.wday.sunshine.precipitation.detrended")
+  add_residuals(model.daily.temperature.wday.sunshine.rainy_day, var = "temperature.wday.sunshine.rainy_day.detrended")
 
-rms.daily.temp.weekday.sunshine.precipitation <- sqrt(mean(daily.weather$temperature.wday.sunshine.precipitation.detrended^2,na.rm = TRUE))
+rms.daily.temp.weekday.sunshine.rainy_day <- sqrt(mean(daily.weather$temperature.wday.sunshine.rainy_day.detrended^2,na.rm = TRUE))
 
-ggplot(daily.weather, aes(date, temperature.wday.sunshine.precipitation.detrended)) +
+ggplot(daily.weather, aes(date, temperature.wday.sunshine.rainy_day.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
-  labs(title=sprintf("Accounting precipitation further reduces RMSE to  %.1e", rms.daily.temp.weekday.sunshine.precipitation))
+  labs(title=sprintf("Accounting precipitation further reduces RMSE to  %.1e", rms.daily.temp.weekday.sunshine.rainy_day))
 ```
 
-Again, accounting for the additional variable has reduced the root mean square error. However, the reduction was not as pronounced as previously. We will have to be careful with interpretation of this result; and maybe we will have to have a look at parameters like the Akaike information criterion.
+Again, accounting for the additional variable has reduced the root mean square error. However, the reduction was not as pronounced as previously. 
 
-Focusing on the outliers in the residuals, we observe:
+## Outlier inspection
 
-* three days, approximately in August, see far more cyclists than our model expects.
+Overall, the pattern of residuals shows little remaining structure. However, we observe several very distinct outliers - days, where actual cyclist counts are very different from what our model expects. Focusing on the outliers in the residuals, we observe:
 
-* around the end of December, our model predicts more cyclists than we actually see.
+* Three days, approximately in August, see far more cyclists than our model expects.
 
-* Approximately in October 2014, we see a strong dip, which is not visible in October 2016.
+* Around the end of December, our model predicts more cyclists than we actually see.
+
+* Approximately in October 2014, we see a strong dip, which is not visible in October 2015.
 
 We proceed with a close inspection of the outliers:
 
 ```{r outlier.display}
 outliers <- daily.weather %>% 
-  filter(abs(temperature.wday.sunshine.precipitation.detrended) > 900)
+  filter(abs(temperature.wday.sunshine.rainy_day.detrended) > 900)
 
-ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.precipitation.detrended)) +
+ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.rainy_day.detrended)) +
   geom_point(aes(color=weekday)) + 
   geom_text(aes(label=date, colour = weekday, vjust = -0.5)) +
   labs(title="Negative outliers tend to be public holidays")
@@ -316,10 +306,10 @@ Labeling the outliers with dates permits the following insights:
 
 * The days with more cyclists are more difficult to interpret. Most notably, this affects some days in August. We need to check local events in Rostock.
 
-We grab a csv file with official holidays in Mecklenburg-Vorpommern. Google was very helpful: http://www.feiertage.net/frei-tage.php
+We grab a csv file with official holidays in Mecklenburg-Vorpommern. Google was very helpful here: http://www.feiertage.net/frei-tage.php
 
-```{r model.daily.temperature.wday.sunshine.precipitation.holiday}
-# we need to grab public holidays:
+```{r model.daily.temperature.wday.sunshine.rainy_day.holiday,, message=FALSE, warning = FALSE }
+# we grab public holidays for Mecklenburg-Vorpommern (MV):
 
 holidays.2013 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2013&type=csv',';', trim_ws = TRUE) %>% 
   mutate(date = dmy(Tag)) %>% 
@@ -334,45 +324,49 @@ holidays.2015 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=
 
 # we concatenate these frames 
 holidays <- bind_rows(holidays.2013, holidays.2014, holidays.2015)
-# and create a column 'holiday' in daily.weather, which is true when a
-# corresponding element exsits in the holiday table
+# and create a column 'holiday' in daily.weather, which is true when 
+# corresponding element exists in the holiday table
 
 daily.weather <- left_join(daily.weather, holidays, by = 'date') %>%
   mutate(holiday = is.na(Feiertage)) %>%
   mutate(holiday = !holiday)
 
 
-model.daily.temperature.wday.sunshine.precipitation.holiday <- lm(n~ temperature + weekday + sunshinetime + precipitation + holiday, data = daily.weather)
+model.daily.temperature.wday.sunshine.rainy_day.holiday <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = daily.weather)
 
 daily.weather <- daily.weather %>%
-  add_residuals(model.daily.temperature.wday.sunshine.precipitation.holiday, var = "temperature.wday.sunshine.precipitation.holiday.detrended")
+  add_residuals(model.daily.temperature.wday.sunshine.rainy_day.holiday, var = "temperature.wday.sunshine.rainy_day.holiday.detrended")
 
-rms.daily.temp.weekday.sunshine.precipitation.holiday <- sqrt(mean(daily.weather$temperature.wday.sunshine.precipitation.holiday.detrended^2,na.rm = TRUE))
+rms.daily.temp.weekday.sunshine.rainy_day.holiday <- sqrt(mean(daily.weather$temperature.wday.sunshine.rainy_day.holiday.detrended^2,na.rm = TRUE))
 
-ggplot(daily.weather, aes(date, temperature.wday.sunshine.precipitation.holiday.detrended)) +
+ggplot(daily.weather, aes(date, temperature.wday.sunshine.rainy_day.holiday.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
-  labs(title=sprintf("Now with holidays: RMSE  %.1e", rms.daily.temp.weekday.sunshine.precipitation.holiday))
+  labs(title=sprintf("Now with holidays: RMSE  %.1e", rms.daily.temp.weekday.sunshine.rainy_day.holiday))
 
 outliers <- daily.weather %>% 
-  filter(abs(temperature.wday.sunshine.precipitation.holiday.detrended) > 900)
+  filter(abs(temperature.wday.sunshine.rainy_day.holiday.detrended) > 900)
 
-ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.precipitation.holiday.detrended)) +
+ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.rainy_day.holiday.detrended)) +
   geom_point(aes(color=weekday)) + 
   geom_text(aes(label=date, colour = weekday, vjust = -0.5)) +
   labs(title="Some negative outliers remain")
 ```
 
 
-Accounting for public holidays has further reduced the root mean square error. Some negative outliers remain, such as christmas, where many people are presumably on holiday.
+Accounting for public holidays has further reduced the root mean square error. Some negative outliers remain, such as christmas, where many people presumably do not work, although this is not a public holiday. 
 
 The days with cyclist counts that are much higher than our models expect still need further investigation. Google to the rescue:
 
-* 10.  August 2013: Hanse Sail Festival
-* 10. August 2014: Hanse Sail Festival. 
+* Around August 10th 2013: Hanse Sail Festival.
+* Around August 10th 2014: Hanse Sail Festival. 
 
-Check. 
+The Hanse Sail Festival appears to be a large Regatta, which obviously is associated with a large increase in cyclists. Armed with that knowledge, we can observe this effect even in the original data, although it is much more obvious in the plot above.
+
+* 22.3.2014: On this day, the local soccer team FC Hansa Rostock was playing against Duisburg, this may account for the increased number of cyclists. But then, football matches like this occur more often, there may also be another reason for this sudden increase: http://www.0381-magazin.de/rostock/termine/22-03-2014.html
+
+* 31.3.2014: I did not find a specific reason for this outlier - the same holds for 22.4.2013. Ideas?
 
 
 ## Modelling: summary
@@ -380,25 +374,27 @@ Check.
 Our tentative final model has the following parameters:
 
 ```{r model.summary}
-summary(model.daily.temperature.wday.sunshine.precipitation)
+summary(model.daily.temperature.wday.sunshine.rainy_day)
 
 ```
-
 
 
 Modelling cyclist counts in Rostock thus permits the following insights:
 
 1. On average, 670 cyclists pass the counting station each day.
-2. Each degree of temperature increases this count by 80 cyclists.
+2. Each degree of temperature increases this count by approximatley 80 cyclists.
 3. Weekdays have a strong (and suspicious) influence. Factors are reported as L Q C 4,5,6; we need to look into that. 
 4. Each additional hour of sunshine time increases the cyclist count by 67 cyclists per day.
 5. Each mm of precipitatio decreases cyclist counts by 32 per day. Rostock cyclists are not much affected by rain, apparently.
 
 Currently, this model has the following limitations:
 
-1. We cannot account for sudden drops in cyclists when temperature is freezing. (is there an influence? we need to explore this)
+1. We should try to model the workday/weekend differentation with a binary factor. This may help to reduce potential overfitting.
 
-2. We have not investigated changes due to holidays. Given the strong weekend/workday pattern, we would expect to see holidays as suspicious outliers in the residuals.
+2. Sudden drops below freezing, maybe in combination with precipitation, may influence cyclist counts in a nonlinear matter. This linear modeling approach cannot account for such effects.
 
-3. On a related matter, we should try to model the workday/weekend thing with a binary factor. This may help to reduce potential overfitting.
+3. I have not (yet) found explanations for all outliers.
+
+
+
 
