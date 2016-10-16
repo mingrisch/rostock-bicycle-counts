@@ -24,7 +24,7 @@ This document is written in R markdown, in order to provide maximal reproducibil
 
 We are working in the `tidyverse`: 
 
-```{r imports}
+```{r imports, message = FALSE}
 library(tidyverse)
 library(lubridate)
 ```
@@ -35,7 +35,7 @@ library(lubridate)
 Data from the Rostock open data portal was downloaded on 2016-10-03 and saved locally. Providing the locale to read_csv circumvents a nasty issue with daylight saving time and the one- or two-hour time shift from UTC.
 
 
-```{r data.preparation}
+```{r data.preparation, message=FALSE}
 data <- read_csv('data/external/radmonitore_daten.csv',
                  locale = locale(tz="Europe/Berlin"))
 data.radmonitore <- read_csv('data/external/radmonitore_standorte.csv')
