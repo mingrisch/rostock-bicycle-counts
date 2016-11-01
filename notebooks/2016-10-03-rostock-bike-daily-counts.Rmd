@@ -252,6 +252,9 @@ After accounting for the influence of air temperature, we observe that there is 
 We see that weekend cyclist counts are much lower than anticipated by our simple temperature model. In the next iteration, we include this effect as an additional variable. (later on, we could try to differentiate only the two level factor  `business day or not`)
 
 ```{r model.daily.temperature.wday}
+
+# to do: we should introduce a column 'business day', which accounts for weekends and holidays
+
 model.daily.temperature.wday <- lm(n~ temperature + weekday, data = train.daily)
 
 
@@ -348,10 +351,6 @@ Labeling the outliers with dates permits the following insights:
 
 ```{r model.daily.temperature.wday.sunshine.rainy_day.holiday,, message=FALSE, warning = FALSE }
 
-
-
-
-
 model.daily.temperature.wday.sunshine.rainy_day.holiday <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = train.daily)
 
 train.daily <- train.daily %>%
@@ -389,7 +388,7 @@ The Hanse Sail Festival appears to be a large Regatta, which obviously is associ
 * 31.3.2014: I did not find a specific reason for this outlier - the same holds for 22.4.2013. Ideas?
 
 
-## Modelling: summary
+## Modelling: validation and summary
 
 Our tentative final model has the following parameters:
 
@@ -414,6 +413,9 @@ Currently, this model has the following limitations:
 2. Sudden drops below freezing, maybe in combination with precipitation, may influence cyclist counts in a nonlinear matter. This linear modeling approach cannot account for such effects.
 
 3. I have not (yet) found explanations for all outliers.
+
+### Model validation: 
+If our model is not overfit to the training data, we would excpect a similar RMS in the test data as in the training data. check!
 
 
 
