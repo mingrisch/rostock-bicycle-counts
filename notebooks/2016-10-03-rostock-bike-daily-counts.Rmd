@@ -99,13 +99,11 @@ precip <- read_delim('data/external/dwd_rostock/precip_klima_Tageswerte_19010101
   mutate(date = ymd(MESS_DATUM)) %>%
   select(date, precipitation = NIEDERSCHLAGSHOEHE)
 
-daily.weather <- daily %>% 
+daily <- daily %>% 
   left_join(weather, by="date") %>%
   left_join(solar, by="date") %>%
   left_join(precip, by = "date")  %>% 
   mutate(rainy_day = precipitation >0)
-
-
 
 ```
 
@@ -136,14 +134,15 @@ holidays <- bind_rows(holidays.2013, holidays.2014, holidays.2015, holidays.2016
 # and create a column 'holiday' in daily.weather, which is true when 
 # corresponding element exists in the holiday table
 
-daily <- left_join(daily.weather, holidays, by = 'date') %>%
+daily <- left_join(daily, holidays, by = 'date') %>%
   mutate(holiday = is.na(Feiertage)) %>%
   mutate(holiday = !holiday)
 
 # train test split
-train.daily <- daily %>% filter(year(zeitpunkt)<2015)
-test.daily <- daily %>% filter(year(zeitpunkt)>=2015)
-
+train.daily <- daily %>% filter(year(date)<2015)
+test.daily <- daily %>% filter(year(date)>=2015)
+readr::write_csv(train.daily, 'data/processed/train.daily.csv', col_names = TRUE)
+readr::write_csv(test.daily, 'data/processed/test.daily.csv', col_names = TRUE)
 ```
 
 In the last line, I have introduced a categorial variable `rainy_day`, which encodes whether there was precipitation on each given day or not. The tibble `daily.weather` (as far as I am concerned, a tibble is a dataframe with enhanced printing capabilities) now contains daily bicycle counts, temperature, sunshine time and precipitation.
@@ -154,7 +153,7 @@ In the last line, I have introduced a categorial variable `rainy_day`, which enc
 First, I investigate the bicycle counts over the entire time of our training data:
 
 ```{r EDA.daily}
-ggplot(daily, aes(x=date, y=n)) +
+ggplot(train.daily, aes(x=date, y=n)) +
   geom_line() + 
   labs(title="Bicycle counts show strong variation over time")
 ``` 
@@ -165,25 +164,25 @@ Of course, we can enhance our plot by incorporating information about the day of
 
 
 ```{r EDA.daily.continued}
-ggplot(daily, aes(x=date, y=n)) +
+ggplot(train.daily, aes(x=date, y=n)) +
   geom_line(aes(alpha = 0.3)) +
   geom_point(aes(color = weekday, size = 2, alpha = 0.3)) +
   labs(title="Weekends tend to see fewer cyclists")
 
-ggplot(daily.weather, aes(x=temperature, y=n)) + 
+ggplot(train.daily, aes(x=temperature, y=n)) + 
   geom_point(aes(alpha=0.2, size = 1.5,color = weekday)) +
   labs(title='On warmer days, cyclist counts are higher')
 
-ggplot(daily.weather, aes(x=rainy_day, y=n)) + 
+ggplot(train.daily, aes(x=rainy_day, y=n)) + 
   geom_boxplot(aes(alpha=0.2)) +
   labs(title="More bikers on dry days") 
 
-ggplot(daily.weather, aes(x=precipitation, y=n)) + 
+ggplot(train.daily, aes(x=precipitation, y=n)) + 
   geom_point(aes(alpha=0.2, size = 1.5,color = weekday)) +
   scale_x_log10() +
   labs(title="No strong relation of precipitation to cyclist counts") 
 
-ggplot(daily.weather, aes(x=sunshinetime, y=n)) +
+ggplot(train.daily, aes(x=sunshinetime, y=n)) +
   geom_point() +
   labs(title = "Many cyclists ride even when the sun is not shining")
 ```
@@ -221,24 +220,24 @@ We try to capture the influence of the temperature on the cyclist counts:
 
 ```{r model.daily.temperature}
 library(modelr)
-model.daily.temperature <- lm(n~ temperature, data = daily.weather)
+model.daily.temperature <- lm(n~ temperature, data = train.daily)
 
 # and overlay the model fit
-grid <- daily.weather %>%
+grid <- train.daily %>%
   data_grid(temperature=seq_range(temperature, 50)) %>%
   add_predictions((model.daily.temperature), "n_pred")
 
-ggplot(daily.weather, aes(x=temperature, y=n)) +
+ggplot(train.daily, aes(x=temperature, y=n)) +
   geom_point(aes(size=2, alpha=0.2, color = weekday)) +
   geom_line(data=grid, aes(x=temperature, y=n_pred,size=1)) +
   labs(title = "Temperature appears to be linearly related to cyclist counts")
 
-daily.weather <- daily.weather %>%
+train.daily <- train.daily %>%
   add_residuals(model.daily.temperature, var = "temperature.detrended")
 
-rms.daily.temp <- sqrt(mean(daily.weather$temperature.detrended^2))
+rms.daily.temp <- sqrt(mean(train.daily$temperature.detrended^2))
 
-ggplot(daily.weather, aes(date, temperature.detrended)) +
+ggplot(train.daily, aes(date, temperature.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
@@ -253,15 +252,15 @@ After accounting for the influence of air temperature, we observe that there is 
 We see that weekend cyclist counts are much lower than anticipated by our simple temperature model. In the next iteration, we include this effect as an additional variable. (later on, we could try to differentiate only the two level factor  `business day or not`)
 
 ```{r model.daily.temperature.wday}
-model.daily.temperature.wday <- lm(n~ temperature + weekday, data = daily.weather)
+model.daily.temperature.wday <- lm(n~ temperature + weekday, data = train.daily)
 
 
-daily.weather <- daily.weather %>%
+train.daily <- train.daily %>%
   add_residuals(model.daily.temperature.wday, var = "temperature.wday.detrended")
 
-rms.daily.temp.weekday <- sqrt(mean(daily.weather$temperature.wday.detrended^2))
+rms.daily.temp.weekday <- sqrt(mean(train.daily$temperature.wday.detrended^2))
 
-ggplot(daily.weather, aes(date, temperature.wday.detrended)) +
+ggplot(train.daily, aes(date, temperature.wday.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
@@ -280,14 +279,14 @@ We observe:
 ## Remaining seasonal changes: sunshine time?
 
 ```{r model.daily.temperature.wday.sunshinetime}
-model.daily.temperature.wday.sunshine <- lm(n~ temperature + weekday + sunshinetime, data = daily.weather)
+model.daily.temperature.wday.sunshine <- lm(n~ temperature + weekday + sunshinetime, data = train.daily)
 
-daily.weather <- daily.weather %>%
+train.daily <- train.daily %>%
   add_residuals(model.daily.temperature.wday.sunshine, var = "temperature.wday.sunshine.detrended")
 
-rms.daily.temp.weekday.sunshine <- sqrt(mean(daily.weather$temperature.wday.sunshine.detrended^2,na.rm = TRUE))
+rms.daily.temp.weekday.sunshine <- sqrt(mean(train.daily$temperature.wday.sunshine.detrended^2,na.rm = TRUE))
 
-ggplot(daily.weather, aes(date, temperature.wday.sunshine.detrended)) +
+ggplot(train.daily, aes(date, temperature.wday.sunshine.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
@@ -300,14 +299,14 @@ This was a very successfull step in modeling our cyclist counts: The remaining s
 We have seen that more cyclists tend to ride on dry days, and we have also observed that those riders that rain on rainy days are not intimidated by the amount of rain. Hence, we model the influence of rain simply with a categorical variable `rainy_day`.
 
 ```{r model.daily.precipitation}
-model.daily.temperature.wday.sunshine.rainy_day <- lm(n~ temperature + weekday + sunshinetime + rainy_day, data = daily.weather)
+model.daily.temperature.wday.sunshine.rainy_day <- lm(n~ temperature + weekday + sunshinetime + rainy_day, data = train.daily)
 
-daily.weather <- daily.weather %>%
+train.daily <- train.daily %>%
   add_residuals(model.daily.temperature.wday.sunshine.rainy_day, var = "temperature.wday.sunshine.rainy_day.detrended")
 
-rms.daily.temp.weekday.sunshine.rainy_day <- sqrt(mean(daily.weather$temperature.wday.sunshine.rainy_day.detrended^2,na.rm = TRUE))
+rms.daily.temp.weekday.sunshine.rainy_day <- sqrt(mean(train.daily$temperature.wday.sunshine.rainy_day.detrended^2,na.rm = TRUE))
 
-ggplot(daily.weather, aes(date, temperature.wday.sunshine.rainy_day.detrended)) +
+ggplot(train.daily, aes(date, temperature.wday.sunshine.rainy_day.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
@@ -329,7 +328,7 @@ Overall, the pattern of residuals shows little remaining structure. However, we 
 We proceed with a close inspection of the outliers:
 
 ```{r outlier.display}
-outliers <- daily.weather %>% 
+outliers <- train.daily %>% 
   filter(abs(temperature.wday.sunshine.rainy_day.detrended) > 900)
 
 ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.rainy_day.detrended)) +
@@ -353,20 +352,20 @@ Labeling the outliers with dates permits the following insights:
 
 
 
-model.daily.temperature.wday.sunshine.rainy_day.holiday <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = daily.weather)
+model.daily.temperature.wday.sunshine.rainy_day.holiday <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = train.daily)
 
-daily.weather <- daily.weather %>%
+train.daily <- train.daily %>%
   add_residuals(model.daily.temperature.wday.sunshine.rainy_day.holiday, var = "temperature.wday.sunshine.rainy_day.holiday.detrended")
 
-rms.daily.temp.weekday.sunshine.rainy_day.holiday <- sqrt(mean(daily.weather$temperature.wday.sunshine.rainy_day.holiday.detrended^2,na.rm = TRUE))
+rms.daily.temp.weekday.sunshine.rainy_day.holiday <- sqrt(mean(train.daily$temperature.wday.sunshine.rainy_day.holiday.detrended^2,na.rm = TRUE))
 
-ggplot(daily.weather, aes(date, temperature.wday.sunshine.rainy_day.holiday.detrended)) +
+ggplot(train.daily, aes(date, temperature.wday.sunshine.rainy_day.holiday.detrended)) +
   geom_line(alpha=0.2) +
   geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
   geom_ref_line(h=0) +
   labs(title=sprintf("Now with holidays: RMSE  %.1e", rms.daily.temp.weekday.sunshine.rainy_day.holiday))
 
-outliers <- daily.weather %>% 
+outliers <- train.daily %>% 
   filter(abs(temperature.wday.sunshine.rainy_day.holiday.detrended) > 900)
 
 ggplot(outliers, aes(x=date, y=temperature.wday.sunshine.rainy_day.holiday.detrended)) +
