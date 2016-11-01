@@ -52,10 +52,11 @@ data <- data %>% left_join(id.bezeichung, by = "standort_id") %>%
   filter(bezeichnung == 'Am Strande/Holzhalbinsel') %>%
   select(-bezeichnung)
 
-train <- data%>% filter(year(zeitpunkt)<2015)
-test <- data %>% filter(year(zeitpunkt)>=2015)
+# train <- data%>% filter(year(zeitpunkt)<2015)
+# test <- data %>% filter(year(zeitpunkt)>=2015)
 
-daily <- train %>% 
+#daily <- train %>% 
+daily <- data %>% 
   mutate(date = date(zeitpunkt)) %>%
   group_by(date) %>% 
   summarise(n = sum(summe)) %>%
@@ -104,6 +105,44 @@ daily.weather <- daily %>%
   left_join(precip, by = "date")  %>% 
   mutate(rainy_day = precipitation >0)
 
+
+
+```
+
+We grab a csv file with official holidays in Mecklenburg-Vorpommern. Google was very helpful here: http://www.feiertage.net/frei-tage.php
+
+```{r join.holidays}
+
+
+# we grab public holidays for Mecklenburg-Vorpommern (MV):
+
+holidays.2013 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2013&type=csv',';', trim_ws = TRUE) %>% 
+  mutate(date = dmy(Tag)) %>% 
+  select(date, Feiertage)
+
+holidays.2014 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2014&type=csv',';', trim_ws = TRUE) %>% 
+  mutate(date = dmy(Tag))%>% 
+  select(date, Feiertage)
+
+holidays.2015 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2015&type=csv',';', trim_ws = TRUE) %>% mutate(date = dmy(Tag))%>% 
+  select(date, Feiertage)
+
+holidays.2016 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2015&type=csv',';', trim_ws = TRUE) %>% mutate(date = dmy(Tag))%>% 
+  select(date, Feiertage)
+
+
+# we concatenate these frames 
+holidays <- bind_rows(holidays.2013, holidays.2014, holidays.2015, holidays.2016)
+# and create a column 'holiday' in daily.weather, which is true when 
+# corresponding element exists in the holiday table
+
+daily <- left_join(daily.weather, holidays, by = 'date') %>%
+  mutate(holiday = is.na(Feiertage)) %>%
+  mutate(holiday = !holiday)
+
+# train test split
+train.daily <- daily %>% filter(year(zeitpunkt)<2015)
+test.daily <- daily %>% filter(year(zeitpunkt)>=2015)
 
 ```
 
@@ -306,30 +345,12 @@ Labeling the outliers with dates permits the following insights:
 
 * The days with more cyclists are more difficult to interpret. Most notably, this affects some days in August. We need to check local events in Rostock.
 
-We grab a csv file with official holidays in Mecklenburg-Vorpommern. Google was very helpful here: http://www.feiertage.net/frei-tage.php
+
 
 ```{r model.daily.temperature.wday.sunshine.rainy_day.holiday,, message=FALSE, warning = FALSE }
-# we grab public holidays for Mecklenburg-Vorpommern (MV):
 
-holidays.2013 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2013&type=csv',';', trim_ws = TRUE) %>% 
-  mutate(date = dmy(Tag)) %>% 
-  select(date, Feiertage)
 
-holidays.2014 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2014&type=csv',';', trim_ws = TRUE) %>% 
-  mutate(date = dmy(Tag))%>% 
-  select(date, Feiertage)
 
-holidays.2015 <- read_delim('http://www.feiertage.net/csvfile.php?state=MV&year=2015&type=csv',';', trim_ws = TRUE) %>% mutate(date = dmy(Tag))%>% 
-  select(date, Feiertage)
-
-# we concatenate these frames 
-holidays <- bind_rows(holidays.2013, holidays.2014, holidays.2015)
-# and create a column 'holiday' in daily.weather, which is true when 
-# corresponding element exists in the holiday table
-
-daily.weather <- left_join(daily.weather, holidays, by = 'date') %>%
-  mutate(holiday = is.na(Feiertage)) %>%
-  mutate(holiday = !holiday)
 
 
 model.daily.temperature.wday.sunshine.rainy_day.holiday <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = daily.weather)
