@@ -1,0 +1,59 @@
+---
+title: "Modeling bicycle count"
+author: "Michael Ingrisch"
+date: "6 November 2016"
+output: html_document
+---
+
+## Preparations
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "../")
+
+library(tidyverse)
+library(modelr)
+```
+
+In this follow-up post, we further explore modeling of bicycle count data.
+
+We load the train and test data that we prepared previously.
+```{r load.data, message=FALSE, warning=FALSE}
+daily.train <- read_csv('data/processed/train.daily.csv')
+daily.test <- read_csv('data/processed/test.daily.csv')
+
+```
+
+As a reference, we use our previous model and evaluate its performance on the bicycle counts from 2016, which the model has never seed in its training phase. Using this independent test data set, we can control potential overfitting of our model. 
+
+```{r reference.model, message=FALSE, warning=FALSE}
+model.daily.reference <- lm(n~ temperature + weekday + sunshinetime + rainy_day + holiday, data = daily.train)
+
+daily.train <- daily.train %>%
+  add_residuals(model.daily.reference, var = "reference.residuals")
+
+rms.daily.reference <- sqrt(mean(daily.train$reference.residuals^2,na.rm = TRUE))
+
+ggplot(daily.train, aes(date, reference.residuals)) +
+  geom_line(alpha=0.2) +
+  geom_point(aes(alpha=0.5, size = 2, color=weekday)) +
+  geom_ref_line(h=0) +
+  labs(title=sprintf("Now with holidays: RMSE  %.1e", rms.daily.reference))
+```
+
+## Model validation on a test dataset
+```{r reference.validation, message=FALSE, warning=FALSE}
+ # check modelr for predictions, add to test data.
+
+```
+
+## Advanced modeling: Random regression forest
+
+Very short introduction to RF: interactions, nonlinear effects
+
+* we use a machine learning frame work (mlr)
+
+* We tune our model hyperparameters using cross validation on the training data set
+
+Teh final model is then evaluated on the test data.
+
