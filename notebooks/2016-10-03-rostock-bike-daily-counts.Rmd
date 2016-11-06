@@ -138,6 +138,11 @@ daily <- left_join(daily, holidays, by = 'date') %>%
   mutate(holiday = is.na(Feiertage)) %>%
   mutate(holiday = !holiday)
 
+# also, we introduce a column "Business day". For now, this encodes, whether each day is a weekday and not a holidy.
+daily <- daily %>% 
+  mutate(businessday = (wday(date)<6) & !(holiday))
+
+
 # train test split
 train.daily <- daily %>% filter(year(date)<2015)
 test.daily <- daily %>% filter(year(date)>=2015)
@@ -145,7 +150,8 @@ readr::write_csv(train.daily, 'data/processed/train.daily.csv', col_names = TRUE
 readr::write_csv(test.daily, 'data/processed/test.daily.csv', col_names = TRUE)
 ```
 
-In the last line, I have introduced a categorial variable `rainy_day`, which encodes whether there was precipitation on each given day or not. The tibble `daily.weather` (as far as I am concerned, a tibble is a dataframe with enhanced printing capabilities) now contains daily bicycle counts, temperature, sunshine time and precipitation.
+
+The tibble `daily.weather` (as far as I am concerned, a tibble is a dataframe with enhanced printing capabilities) now contains daily bicycle counts, temperature, sunshine time and precipitation.
 
 
 # Exploratory data analysis
