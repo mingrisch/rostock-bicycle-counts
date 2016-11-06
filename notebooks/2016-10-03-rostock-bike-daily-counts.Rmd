@@ -2,7 +2,7 @@
 title: "Bike usage in Rostock"
 author: "Michael Ingrisch"
 date: "October 8, 2016"
-output: html_document
+output: word_document
 ---
 
 ```{r setup, include=FALSE}
